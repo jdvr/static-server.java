@@ -1,0 +1,89 @@
+#!/usr/bin/java --source 22
+
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.sql.SQLOutput;
+
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpExchange;
+
+public class StaticServer {
+
+    public static void main(String[] args) throws IOException {
+        if (args.length < 1 || args.length > 2) {
+            System.err.println("""
+                Usage: static-server <path/to/static/folder> [port]
+
+                by default port is 8080
+            """);
+            System.exit(1);
+        }
+        var port = 8080;
+        if (args.length == 2) {
+            try {
+                port = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.err.printf("Unable to use port %s%n", args[1]);
+                System.exit(1);
+            }
+        }
+
+        Path staticDir = Paths.get(args[0]).toAbsolutePath();
+        if (!Files.isDirectory(staticDir)) {
+            System.err.println("Error: Path is not a directory: " + staticDir);
+            System.exit(1);
+        }
+
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+        server.createContext("/", new StaticFileHandler(staticDir));
+        server.setExecutor(null); // creates a default executor
+        server.start();
+        System.out.printf("Server started on port %d%n", port);
+    }
+
+    static class StaticFileHandler implements HttpHandler {
+        private final Path staticDir;
+
+        public StaticFileHandler(Path staticDir) {
+            this.staticDir = staticDir;
+        }
+
+        @Override
+        public void handle(HttpExchange t) throws IOException {
+            var requestPath = t.getRequestURI().normalize().getPath();
+            var filePath = resolveFilePath(requestPath);
+
+            if (Files.exists(filePath) && !Files.isDirectory(filePath)) {
+                t.sendResponseHeaders(200, Files.size(filePath));
+                try (var os = t.getResponseBody()) {
+                    Files.copy(filePath, os);
+                    System.out.printf("Served %s%n", filePath);
+                }
+            } else {
+                var response = "file not found with path: " + filePath;
+                t.sendResponseHeaders(404, response.length());
+                try (var os = t.getResponseBody()) {
+                    os.write(response.getBytes());
+                    System.err.printf("Filed to served %s%n", filePath);
+                }
+            }
+        }
+
+        private  Path resolveFilePath(String requestPath) {
+            if (requestPath.equals("/")) {
+                return staticDir.resolve("index.html").normalize();
+            }
+
+            var filePath = staticDir.resolve(requestPath.substring(1)).normalize();
+            if (Files.isDirectory(filePath)) {
+                return filePath.resolve("index.html");
+            }
+
+            return filePath;
+        }
+    }
+}
